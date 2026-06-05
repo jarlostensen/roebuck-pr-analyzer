@@ -1,0 +1,79 @@
+# Roebuck configuration
+# Copy this file to config.toml and fill in your values.
+# NEVER commit config.toml — add it to .gitignore.
+#
+# Required environment variables:
+#   ANTHROPIC_API_KEY  — Anthropic API key (not stored here)
+#   GITHUB_TOKEN       — can be set here or via environment variable
+
+[github]
+# Personal access token with repo read scope.
+# Alternatively, set the GITHUB_TOKEN environment variable (takes precedence).
+token = "ghp_..."
+
+# Target repository in owner/name format.
+repo = "owner/repo-name"
+
+[claude]
+# Model to use for analysis. Defaults to claude-sonnet-4-6.
+model = "claude-sonnet-4-6"
+
+# Maximum tokens in Claude's response per analysis call.
+max_tokens = 4096
+
+# Temperature for Claude responses. Lower = more deterministic.
+# Recommended: 0.0–0.3 for analytical tasks.
+temperature = 0.2
+
+[specs]
+# Glob patterns (relative to repo root) for specification/design doc files.
+# These are loaded and provided as context for PR spec-alignment analysis.
+patterns = [
+    "docs/specs/**/*.md",
+    "docs/adr/*.md",
+    "README.md",
+]
+
+[churn]
+# How far back to look when calculating file churn.
+lookback_days = 90
+
+# Commit messages matching any of these keywords (case-insensitive) are
+# classified as defect-related commits for churn correlation analysis.
+defect_keywords = ["fix", "bug", "hotfix", "patch", "regression", "revert"]
+
+# Minimum number of commits a file must have to appear in churn reports.
+# Increase to filter out rarely-touched files.
+min_commits_threshold = 3
+
+# Maximum commits to scan per run. Each commit requires one GitHub API call to
+# fetch its file list, so this bounds API usage on large or active repos.
+max_commits = 500
+
+# Thresholds for flagging files as coordination risks (many contributors + high
+# defect rate). A file must meet BOTH conditions to be counted.
+coordination_risk_min_authors = 5       # minimum unique authors
+coordination_risk_min_defect_ratio = 0.3  # minimum defect commit ratio (0.0–1.0)
+
+[reports]
+# Directory where Markdown report files are written.
+# Relative to the directory where roebuck is invoked.
+output_dir = "./reports"
+
+[context]
+# Optional project and team context. When set, this is included in every
+# analysis prompt so Claude can calibrate its findings appropriately.
+# All fields are optional — omit or leave blank to skip.
+
+# Describe the team working on this repository.
+# Examples: "Solo developer", "3-person startup team", "25-person eng org"
+team = ""
+
+# Describe the development phase or working style.
+# Examples: "Early/active development", "Stabilisation", "Maintenance mode"
+phase = ""
+
+# Any additional context that should inform the analysis.
+# Examples: "High defect ratios reflect iterative discovery, not instability"
+#           "Auth module is intentionally experimental — not production yet"
+notes = ""
