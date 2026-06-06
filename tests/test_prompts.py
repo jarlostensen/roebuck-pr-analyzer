@@ -418,3 +418,109 @@ def test_shared_context_section_partial_fields():
     assert "Platform" in result
     assert "Development phase" not in result
     assert "Notes" not in result
+
+
+# ---------------------------------------------------------------------------
+# TASK-015: profile.py — extraction and enrichment prompt builders
+# ---------------------------------------------------------------------------
+
+from roebuck.prompts import profile as profile_prompts
+
+
+def _make_interfaces(n: int = 3) -> list:
+    """Return a list of ExtractedInterface TypedDicts for testing."""
+    return [
+        {
+            "name": f"func_{i}",
+            "kind": "function",
+            "signature": f"def func_{i}(x: int) -> str",
+            "module": f"src/module_{i % 2}.py",
+            "is_public": True,
+        }
+        for i in range(n)
+    ]
+
+
+def test_extraction_system_prompt_instructs_interface_extraction():
+    sp = profile_prompts.EXTRACTION_SYSTEM_PROMPT.lower()
+    assert "public" in sp
+    assert "interface" in sp
+    assert "signature" in sp
+    assert "module" in sp
+
+
+def test_extraction_system_prompt_asks_for_json_object():
+    sp = profile_prompts.EXTRACTION_SYSTEM_PROMPT.lower()
+    assert "json" in sp
+    assert "interfaces" in sp
+
+
+def test_build_extraction_prompt_contains_source_header():
+    sources = {"src/foo.py": "def hello(): pass"}
+    prompt = profile_prompts.build_extraction_prompt(sources)
+    assert "Source Files" in prompt
+    assert "src/foo.py" in prompt
+    assert "def hello" in prompt
+
+
+def test_build_extraction_prompt_multiple_files():
+    sources = {"a.py": "def a(): ...", "b.go": "func B() {}"}
+    prompt = profile_prompts.build_extraction_prompt(sources)
+    assert "a.py" in prompt
+    assert "b.go" in prompt
+
+
+def test_build_extraction_prompt_respects_max_chars():
+    big_content = "x" * 10_000
+    sources = {"file1.py": big_content, "file2.py": big_content, "file3.py": big_content}
+    prompt = profile_prompts.build_extraction_prompt(sources, max_chars=5_000)
+    assert "truncated" in prompt.lower()
+    # Total content portion must not exceed limit by much
+    assert len(prompt) < 6_000
+
+
+def test_enrichment_system_prompt_instructs_narrative():
+    sp = profile_prompts.ENRICHMENT_SYSTEM_PROMPT.lower()
+    assert "project_summary" in sp or "project summary" in sp
+    assert "architecture" in sp
+    assert "module" in sp
+
+
+def test_build_enrichment_prompt_contains_interfaces_table():
+    interfaces = _make_interfaces(3)
+    prompt = profile_prompts.build_enrichment_prompt(interfaces)
+    assert "Extracted Interfaces" in prompt
+    assert "func_0" in prompt
+    assert "func_1" in prompt
+
+
+def test_build_enrichment_prompt_contains_modules_section():
+    interfaces = _make_interfaces(3)
+    prompt = profile_prompts.build_enrichment_prompt(interfaces)
+    assert "Modules" in prompt
+    assert "src/module_0.py" in prompt
+    assert "src/module_1.py" in prompt
+
+
+def test_build_enrichment_prompt_excludes_private_interfaces():
+    interfaces = [
+        {"name": "public_fn", "kind": "function", "signature": "def public_fn()",
+         "module": "mod.py", "is_public": True},
+        {"name": "_private", "kind": "function", "signature": "def _private()",
+         "module": "mod.py", "is_public": False},
+    ]
+    prompt = profile_prompts.build_enrichment_prompt(interfaces)
+    assert "public_fn" in prompt
+    assert "_private" not in prompt
+
+
+def test_build_enrichment_prompt_empty_interfaces():
+    prompt = profile_prompts.build_enrichment_prompt([])
+    assert "Extracted Interfaces" in prompt
+    assert "Modules" in prompt
+
+
+def test_build_enrichment_prompt_truncates_large_interface_list():
+    interfaces = _make_interfaces(profile_prompts.MAX_INTERFACES_IN_PROMPT + 10)
+    prompt = profile_prompts.build_enrichment_prompt(interfaces)
+    assert "truncated" in prompt.lower()
