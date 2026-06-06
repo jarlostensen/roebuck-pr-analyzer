@@ -7,6 +7,7 @@ from roebuck.models import (
     FileCommit,
     FileHistoryData,
     PRData,
+    ProjectProfile,
     ReleaseData,
 )
 from roebuck.prompts import pr as pr_prompts
@@ -60,6 +61,33 @@ def test_pr_prompt_diff_truncated():
     pr = _make_pr(diff=big_diff)
     prompt = pr_prompts.build_user_prompt(pr, specs={})
     assert "truncated" in prompt.lower()
+
+
+def test_pr_prompt_profile_does_not_reduce_diff_budget():
+    """Diff allocation uses MAX_DIFF_CHARS regardless of profile presence.
+
+    A diff exactly at the limit should not show a truncation notice whether or
+    not a profile is appended, because the two budgets are independent.
+    """
+    diff_at_limit = "x" * pr_prompts.MAX_DIFF_CHARS
+    pr = _make_pr(diff=diff_at_limit)
+
+    prompt_no_profile = pr_prompts.build_user_prompt(pr, specs={})
+    assert "truncated" not in prompt_no_profile.lower(), (
+        "Diff at exactly MAX_DIFF_CHARS should not trigger truncation notice"
+    )
+
+    small_profile = ProjectProfile(
+        project_summary="A project.",
+        architecture_notes="Simple.",
+        captured_at=datetime(2024, 6, 1, tzinfo=timezone.utc),
+        captured_commit="abc" * 14,
+        captured_ref="main",
+    )
+    prompt_with_profile = pr_prompts.build_user_prompt(pr, specs={}, profile=small_profile)
+    assert "truncated" not in prompt_with_profile.lower(), (
+        "Adding a profile must not shrink the diff budget"
+    )
 
 
 def test_pr_prompt_no_specs_message():

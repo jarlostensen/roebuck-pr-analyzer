@@ -147,6 +147,7 @@ def test_syntax_error_returns_empty_list(caplog):
     source = "def broken(: ..."
     results = _EXTRACTOR.extract(source, "broken.py")
     assert results == []
+    assert any("broken.py" in r.message for r in caplog.records)
 
 
 def test_empty_source_returns_empty_list():
