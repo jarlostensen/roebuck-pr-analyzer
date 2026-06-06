@@ -1,6 +1,8 @@
 from dataclasses import dataclass, field
 from datetime import datetime
-from pydantic import BaseModel
+from typing import Literal
+
+from pydantic import BaseModel, Field
 
 
 # ---------------------------------------------------------------------------
@@ -70,6 +72,22 @@ class PRAnalysisResult(BaseModel):
     test_gaps: list[str]
     summary: str
     recommendations: list[str]
+    profile_delta: list[str] = Field(
+        default_factory=list,
+        description=(
+            "Interfaces added, removed, or changed by this PR relative to the "
+            "stored project profile. Return an empty list if no project profile "
+            "was provided or if drift detection is disabled."
+        ),
+    )
+    spec_vs_reality_gaps: list[str] = Field(
+        default_factory=list,
+        description=(
+            "Gaps between the provided specification documents and the project "
+            "profile's description of current behaviour. Return an empty list "
+            "if only one source (specs or profile) is present."
+        ),
+    )
 
 
 class FileHistoryResult(BaseModel):
@@ -92,3 +110,77 @@ class ReleaseAnalysisResult(BaseModel):
     high_risk_files: list[str]
     breaking_change_indicators: list[str]
     recommendations: list[str]
+
+
+# ---------------------------------------------------------------------------
+# Project Profile models (Pydantic — LLM output from profile capture)
+# ---------------------------------------------------------------------------
+
+class PublicModule(BaseModel):
+    """A source module included in the project profile."""
+
+    path: str
+    purpose: str
+
+
+class PublicInterface(BaseModel):
+    """A named public interface extracted from the codebase.
+
+    Args:
+        name: Identifier name as it appears in source.
+        kind: Interface kind — "function", "class", "method", "endpoint", etc.
+        signature: Canonical, deterministic string representation.
+            Exact-match comparison is reliable only when source is "ast".
+        module: Source module path containing this interface.
+        source: How the interface was extracted — "ast" for deterministic
+            language-specific extraction, "claude" for LLM-based fallback.
+        is_public: Whether the interface is considered public by the extractor.
+    """
+
+    name: str
+    kind: str
+    signature: str
+    module: str
+    source: Literal["ast", "claude"]
+    is_public: bool
+
+
+class DataModel(BaseModel):
+    """A key data structure identified in the project profile."""
+
+    name: str
+    fields_summary: str
+    module: str
+
+
+class ProjectProfile(BaseModel):
+    """Structured description of a project's public API surface.
+
+    Captured by ``roebuck profile capture`` and stored in ``.roebuck/profile.json``.
+    Used to enrich PR analysis with spec-free alignment checks and to detect
+    drift between documented intent and actual implementation.
+
+    Args:
+        profile_version: Schema version; incremented on breaking changes.
+        project_summary: One-paragraph description of the project's purpose.
+        architecture_notes: Key architectural patterns observed in the codebase.
+        public_modules: Source modules included in the captured profile.
+        public_interfaces: Named public interfaces with signatures and metadata.
+        data_models: Key data structures identified in the codebase.
+        external_dependencies: Notable external contracts this project depends on.
+        captured_at: UTC timestamp of when the profile was captured.
+        captured_commit: Full SHA of the HEAD commit at capture time.
+        captured_ref: Branch or tag name at capture time; fallback for SHA
+            reachability failures caused by rebase or force-push.
+    """
+
+    profile_version: int = 1
+    project_summary: str
+    architecture_notes: str
+    public_modules: list[PublicModule] = Field(default_factory=list)
+    public_interfaces: list[PublicInterface] = Field(default_factory=list)
+    data_models: list[DataModel] = Field(default_factory=list)
+    external_dependencies: list[str] = Field(default_factory=list)
+    captured_at: datetime
+    captured_commit: str
+    captured_ref: str

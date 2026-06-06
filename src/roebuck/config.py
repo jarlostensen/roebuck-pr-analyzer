@@ -35,6 +35,28 @@ class ChurnConfig(BaseModel):
     coordination_risk_min_defect_ratio: float = Field(default=0.3, ge=0.0, le=1.0)
 
 
+class ProfileConfig(BaseModel):
+    """Configuration for the ``roebuck profile`` command group.
+
+    Args:
+        patterns: Glob patterns selecting source files to include in the profile.
+        max_chars: Maximum total characters sampled from matched files.
+        stale_commit_threshold: Commits-ahead count above which a staleness
+            warning is prepended to the PR report. Profile is still used.
+        hard_stale_threshold: Commits-ahead count above which the profile is
+            excluded from PR analysis entirely to prevent misleading output.
+        enable_drift_detection: When True, populates ``profile_delta`` in PR
+            reports by comparing current PR interfaces against the stored profile.
+            Off by default pending empirical validation on real codebases.
+    """
+
+    patterns: list[str]
+    max_chars: int = Field(default=40000, ge=1000)
+    stale_commit_threshold: int = Field(default=20, ge=1)
+    hard_stale_threshold: int = Field(default=100, ge=1)
+    enable_drift_detection: bool = False
+
+
 class ReportsConfig(BaseModel):
     output_dir: Path = Path("./reports")
 
@@ -56,6 +78,7 @@ class AppConfig(BaseModel):
     churn: ChurnConfig = ChurnConfig()
     reports: ReportsConfig = ReportsConfig()
     context: ContextConfig = ContextConfig()
+    profile: ProfileConfig | None = None
 
 
 def load_config(path: Path = Path("config.toml")) -> AppConfig:
