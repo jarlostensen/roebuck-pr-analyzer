@@ -418,3 +418,221 @@ def test_shared_context_section_partial_fields():
     assert "Platform" in result
     assert "Development phase" not in result
     assert "Notes" not in result
+
+
+# ---------------------------------------------------------------------------
+# TASK-015: profile.py — extraction and enrichment prompt builders
+# ---------------------------------------------------------------------------
+
+from roebuck.prompts import profile as profile_prompts
+
+
+def _make_interfaces(n: int = 3) -> list:
+    """Return a list of ExtractedInterface TypedDicts for testing."""
+    return [
+        {
+            "name": f"func_{i}",
+            "kind": "function",
+            "signature": f"def func_{i}(x: int) -> str",
+            "module": f"src/module_{i % 2}.py",
+            "is_public": True,
+        }
+        for i in range(n)
+    ]
+
+
+def test_extraction_system_prompt_instructs_interface_extraction():
+    sp = profile_prompts.EXTRACTION_SYSTEM_PROMPT.lower()
+    assert "public" in sp
+    assert "interface" in sp
+    assert "signature" in sp
+    assert "module" in sp
+
+
+def test_extraction_system_prompt_asks_for_json_object():
+    sp = profile_prompts.EXTRACTION_SYSTEM_PROMPT.lower()
+    assert "json" in sp
+    assert "interfaces" in sp
+
+
+def test_build_extraction_prompt_contains_source_header():
+    sources = {"src/foo.py": "def hello(): pass"}
+    prompt = profile_prompts.build_extraction_prompt(sources)
+    assert "Source Files" in prompt
+    assert "src/foo.py" in prompt
+    assert "def hello" in prompt
+
+
+def test_build_extraction_prompt_multiple_files():
+    sources = {"a.py": "def a(): ...", "b.go": "func B() {}"}
+    prompt = profile_prompts.build_extraction_prompt(sources)
+    assert "a.py" in prompt
+    assert "b.go" in prompt
+
+
+def test_build_extraction_prompt_respects_max_chars():
+    big_content = "x" * 10_000
+    sources = {"file1.py": big_content, "file2.py": big_content, "file3.py": big_content}
+    prompt = profile_prompts.build_extraction_prompt(sources, max_chars=5_000)
+    assert "truncated" in prompt.lower()
+    # Total content portion must not exceed limit by much
+    assert len(prompt) < 6_000
+
+
+def test_enrichment_system_prompt_instructs_narrative():
+    sp = profile_prompts.ENRICHMENT_SYSTEM_PROMPT.lower()
+    assert "project_summary" in sp or "project summary" in sp
+    assert "architecture" in sp
+    assert "module" in sp
+
+
+def test_build_enrichment_prompt_contains_interfaces_table():
+    interfaces = _make_interfaces(3)
+    prompt = profile_prompts.build_enrichment_prompt(interfaces)
+    assert "Extracted Interfaces" in prompt
+    assert "func_0" in prompt
+    assert "func_1" in prompt
+
+
+def test_build_enrichment_prompt_contains_modules_section():
+    interfaces = _make_interfaces(3)
+    prompt = profile_prompts.build_enrichment_prompt(interfaces)
+    assert "Modules" in prompt
+    assert "src/module_0.py" in prompt
+    assert "src/module_1.py" in prompt
+
+
+def test_build_enrichment_prompt_excludes_private_interfaces():
+    interfaces = [
+        {"name": "public_fn", "kind": "function", "signature": "def public_fn()",
+         "module": "mod.py", "is_public": True},
+        {"name": "_private", "kind": "function", "signature": "def _private()",
+         "module": "mod.py", "is_public": False},
+    ]
+    prompt = profile_prompts.build_enrichment_prompt(interfaces)
+    assert "public_fn" in prompt
+    assert "_private" not in prompt
+
+
+def test_build_enrichment_prompt_empty_interfaces():
+    prompt = profile_prompts.build_enrichment_prompt([])
+    assert "Extracted Interfaces" in prompt
+    assert "Modules" in prompt
+
+
+def test_build_enrichment_prompt_truncates_large_interface_list():
+    interfaces = _make_interfaces(profile_prompts.MAX_INTERFACES_IN_PROMPT + 10)
+    prompt = profile_prompts.build_enrichment_prompt(interfaces)
+    assert "truncated" in prompt.lower()
+
+
+# ===========================================================================
+# PR prompt — profile integration (TASK-018)
+# ===========================================================================
+
+from datetime import timezone as _tz
+from roebuck.models import ProjectProfile, PublicInterface, PublicModule, DataModel
+from roebuck.prompts.pr import build_system_prompt, _format_profile, MAX_PROFILE_CHARS
+
+
+def _make_profile(**kwargs) -> ProjectProfile:
+    defaults = dict(
+        project_summary="Test project.",
+        architecture_notes="Layered CLI.",
+        captured_at=datetime(2024, 6, 1, tzinfo=_tz.utc),
+        captured_commit="abc" * 14,
+        captured_ref="main",
+    )
+    defaults.update(kwargs)
+    return ProjectProfile(**defaults)
+
+
+def _make_pr_minimal() -> PRData:
+    return PRData(
+        number=1,
+        title="PR",
+        body="desc",
+        author="user",
+        base_branch="main",
+        head_branch="feature",
+        diff="+ line",
+        changed_files=["src/app.py"],
+        additions=1,
+        deletions=0,
+        commits=["feat: x"],
+    )
+
+
+def test_build_system_prompt_base_when_no_profile():
+    from roebuck.prompts.pr import SYSTEM_PROMPT
+    result = build_system_prompt(specs={"docs/spec.md": "spec"}, profile=None)
+    assert result == SYSTEM_PROMPT
+    assert "spec_vs_reality_gaps" not in result
+
+
+def test_build_system_prompt_base_when_no_specs():
+    result = build_system_prompt(specs={}, profile=_make_profile())
+    from roebuck.prompts.pr import SYSTEM_PROMPT
+    assert result == SYSTEM_PROMPT
+    assert "spec_vs_reality_gaps" not in result
+
+
+def test_build_system_prompt_includes_addendum_when_both():
+    result = build_system_prompt(specs={"docs/spec.md": "spec"}, profile=_make_profile())
+    assert "spec_vs_reality_gaps" in result
+
+
+def test_build_user_prompt_includes_profile_section():
+    pr = _make_pr_minimal()
+    profile = _make_profile()
+    prompt = pr_prompts.build_user_prompt(pr, specs={}, profile=profile)
+    assert "## Project Profile" in prompt
+    assert "Test project." in prompt
+
+
+def test_build_user_prompt_no_profile_section_when_none():
+    pr = _make_pr_minimal()
+    prompt = pr_prompts.build_user_prompt(pr, specs={})
+    assert "## Project Profile" not in prompt
+
+
+def test_build_user_prompt_profile_modules_included():
+    pr = _make_pr_minimal()
+    profile = _make_profile(
+        public_modules=[PublicModule(path="src/main.py", purpose="Entry point")]
+    )
+    prompt = pr_prompts.build_user_prompt(pr, specs={}, profile=profile)
+    assert "Entry point" in prompt
+
+
+def test_build_user_prompt_profile_interfaces_included():
+    pr = _make_pr_minimal()
+    profile = _make_profile(
+        public_interfaces=[
+            PublicInterface(
+                name="run",
+                kind="function",
+                signature="def run() -> None",
+                module="src/main.py",
+                source="ast",
+                is_public=True,
+            )
+        ]
+    )
+    prompt = pr_prompts.build_user_prompt(pr, specs={}, profile=profile)
+    assert "def run() -> None" in prompt
+
+
+def test_format_profile_truncates_at_max_chars():
+    profile = _make_profile(
+        architecture_notes="x" * (MAX_PROFILE_CHARS + 500)
+    )
+    result = _format_profile(profile, MAX_PROFILE_CHARS)
+    assert len(result) <= MAX_PROFILE_CHARS + 100  # allows for truncation notice
+    assert "truncated" in result.lower()
+
+
+def test_format_profile_within_limit_no_truncation_note():
+    profile = _make_profile()
+    result = _format_profile(profile, MAX_PROFILE_CHARS)
+    assert "truncated" not in result.lower()

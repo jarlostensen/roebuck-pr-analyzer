@@ -13,9 +13,11 @@ app = typer.Typer(
 )
 analyse_app = typer.Typer(help="Analyse a specific repository artefact.", no_args_is_help=True)
 report_app = typer.Typer(help="Generate aggregate reports.", no_args_is_help=True)
+profile_app = typer.Typer(help="Manage the project profile.", no_args_is_help=True)
 
 app.add_typer(analyse_app, name="analyse")
 app.add_typer(report_app, name="report")
+app.add_typer(profile_app, name="profile")
 
 console = Console()
 
@@ -105,6 +107,49 @@ def report_churn(
     ):
         report_path = churn_analyser.run(cfg)
     console.print(f"[green]Report written:[/green] {report_path}")
+
+
+# ---------------------------------------------------------------------------
+# profile capture
+# ---------------------------------------------------------------------------
+
+@profile_app.command("capture")
+def profile_capture(
+    config_path: Path = _CONFIG_OPT,
+    repo: Optional[str] = _REPO_OPT,
+    force: bool = typer.Option(False, "--force", "-f", help="Overwrite existing profile.json"),
+) -> None:
+    """Extract the project profile and write it to .roebuck/profile.json."""
+    cfg = _load(config_path, repo)
+    from roebuck.analysers.profile import capture
+    with console.status("[bold]Capturing project profile...[/bold]"):
+        result = capture(cfg, force=force)
+    if result is not None:
+        console.print(f"[green]Profile written:[/green] {result}")
+
+
+# ---------------------------------------------------------------------------
+# profile generate-docs
+# ---------------------------------------------------------------------------
+
+@profile_app.command("generate-docs")
+def profile_generate_docs(
+    config_path: Path = _CONFIG_OPT,
+    repo: Optional[str] = _REPO_OPT,
+) -> None:
+    """Render the stored project profile as a Markdown draft document."""
+    cfg = _load(config_path, repo)
+    from roebuck.analysers.profile import generate_docs
+    try:
+        with console.status("[bold]Generating project profile document...[/bold]"):
+            out = generate_docs(cfg)
+        console.print(f"[green]Document written:[/green] {out}")
+    except FileNotFoundError as e:
+        console.print(f"[red]Error:[/red] {e}")
+        raise typer.Exit(code=1)
+    except RuntimeError as e:
+        console.print(f"[red]Error:[/red] {e}")
+        raise typer.Exit(code=1)
 
 
 # ---------------------------------------------------------------------------
