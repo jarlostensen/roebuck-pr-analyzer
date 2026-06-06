@@ -1,51 +1,63 @@
 {
   "profile_version": 1,
-  "project_summary": "Roebuck is a CLI-driven code analysis tool that leverages an AI client (Claude) to perform various repository analyses, including pull request analysis, file history inspection, release diffing, code churn reporting, and codebase profile capture and documentation generation. It is designed to provide AI-assisted insights over Git repositories.",
-  "architecture_notes": "The project follows a layered architecture with a clear separation between the CLI entry-point layer (cli.py using Typer) and a set of pluggable analyser modules, each exposing a simple `run` or domain-specific function that accepts an `AppConfig` and returns a `Path` (likely to a generated report or output file). A shared `ClaudeClient` class provides the AI backend integration used across analysers. Configuration is centralised in an `AppConfig` data model passed through all layers. The CLI layer handles argument parsing and delegates directly to the corresponding analyser module, making it straightforward to add new analysers without modifying the CLI structure significantly.",
+  "project_summary": "Roebuck is a developer tooling project that performs AI-powered analysis of Git repositories, generating reports on pull requests, file history, code churn, releases, and repository profiles. It integrates with GitHub to retrieve repository data and uses the Claude AI API to produce narrative documentation and analytical reports, all driven through a Typer-based CLI.",
+  "architecture_notes": "The project follows a layered architecture: a CLI layer (cli.py using Typer) dispatches commands to a set of pluggable analyser modules (churn, file_history, pr, profile, release), each exposing a uniform `run`-style function that accepts an `AppConfig` and returns a `Path` to the generated report. Configuration is centralised in a Pydantic BaseModel hierarchy loaded from a TOML file. A dedicated `ClaudeClient` class encapsulates all communication with the Claude AI API, keeping AI concerns isolated from the analyser logic. This design makes it straightforward to add new analysers without modifying the CLI or configuration layers.",
   "public_modules": [
     {
       "path": "src/roebuck/analysers/churn.py",
-      "purpose": "Analyses code churn across the repository and produces a report at the returned Path."
+      "purpose": "Analyses code churn across the repository and produces a churn report at a returned Path."
     },
     {
       "path": "src/roebuck/analysers/file_history.py",
-      "purpose": "Analyses the commit history of a specific file within the repository and produces a report."
+      "purpose": "Analyses the Git history of a specific file and produces a file-history report at a returned Path."
     },
     {
       "path": "src/roebuck/analysers/pr.py",
-      "purpose": "Analyses a specific pull request by number and produces an AI-assisted report."
+      "purpose": "Analyses a GitHub pull request by number and produces a PR analysis report at a returned Path."
     },
     {
       "path": "src/roebuck/analysers/profile.py",
-      "purpose": "Captures a structured codebase profile and generates documentation from it, writing outputs to the returned Paths."
+      "purpose": "Captures a structured repository profile and generates documentation from it, each returning a Path to the output artifact."
     },
     {
       "path": "src/roebuck/analysers/release.py",
-      "purpose": "Analyses a release by comparing a given tag against a base tag or ref and produces a release report."
+      "purpose": "Analyses a release by comparing a tag against a base ref and produces a release report at a returned Path."
     },
     {
       "path": "src/roebuck/claude_client.py",
-      "purpose": "Provides the ClaudeClient class that wraps the Anthropic Claude AI API for use by the analyser modules."
+      "purpose": "Provides the ClaudeClient class that wraps communication with the Anthropic Claude AI API."
     },
     {
       "path": "src/roebuck/cli.py",
-      "purpose": "Defines the Typer-based CLI entry-point, exposing commands for all analyser capabilities and routing arguments to the appropriate analyser modules."
+      "purpose": "Defines the Typer-based CLI entry point and command handlers that delegate to the analyser modules."
+    },
+    {
+      "path": "src/roebuck/config.py",
+      "purpose": "Defines the Pydantic configuration model hierarchy and the load_config function for reading config.toml."
     }
   ],
   "public_interfaces": [
     {
       "name": "run",
       "kind": "function",
-      "signature": "def run(tag: str, base: str | None, cfg: AppConfig) -> Path",
-      "module": "src/roebuck/analysers/release.py",
+      "signature": "def run(cfg: AppConfig) -> Path",
+      "module": "src/roebuck/analysers/churn.py",
       "source": "ast",
       "is_public": true
     },
     {
       "name": "run",
       "kind": "function",
-      "signature": "def run(cfg: AppConfig) -> Path",
-      "module": "src/roebuck/analysers/churn.py",
+      "signature": "def run(path: str, cfg: AppConfig) -> Path",
+      "module": "src/roebuck/analysers/file_history.py",
+      "source": "ast",
+      "is_public": true
+    },
+    {
+      "name": "run",
+      "kind": "function",
+      "signature": "def run(number: int, cfg: AppConfig) -> Path",
+      "module": "src/roebuck/analysers/pr.py",
       "source": "ast",
       "is_public": true
     },
@@ -68,16 +80,8 @@
     {
       "name": "run",
       "kind": "function",
-      "signature": "def run(path: str, cfg: AppConfig) -> Path",
-      "module": "src/roebuck/analysers/file_history.py",
-      "source": "ast",
-      "is_public": true
-    },
-    {
-      "name": "run",
-      "kind": "function",
-      "signature": "def run(number: int, cfg: AppConfig) -> Path",
-      "module": "src/roebuck/analysers/pr.py",
+      "signature": "def run(tag: str, base: str | None, cfg: AppConfig) -> Path",
+      "module": "src/roebuck/analysers/release.py",
       "source": "ast",
       "is_public": true
     },
@@ -144,26 +148,130 @@
       "module": "src/roebuck/cli.py",
       "source": "ast",
       "is_public": true
+    },
+    {
+      "name": "GitHubConfig",
+      "kind": "class",
+      "signature": "class GitHubConfig(BaseModel)",
+      "module": "src/roebuck/config.py",
+      "source": "ast",
+      "is_public": true
+    },
+    {
+      "name": "ClaudeConfig",
+      "kind": "class",
+      "signature": "class ClaudeConfig(BaseModel)",
+      "module": "src/roebuck/config.py",
+      "source": "ast",
+      "is_public": true
+    },
+    {
+      "name": "SpecsConfig",
+      "kind": "class",
+      "signature": "class SpecsConfig(BaseModel)",
+      "module": "src/roebuck/config.py",
+      "source": "ast",
+      "is_public": true
+    },
+    {
+      "name": "ChurnConfig",
+      "kind": "class",
+      "signature": "class ChurnConfig(BaseModel)",
+      "module": "src/roebuck/config.py",
+      "source": "ast",
+      "is_public": true
+    },
+    {
+      "name": "ProfileConfig",
+      "kind": "class",
+      "signature": "class ProfileConfig(BaseModel)",
+      "module": "src/roebuck/config.py",
+      "source": "ast",
+      "is_public": true
+    },
+    {
+      "name": "ReportsConfig",
+      "kind": "class",
+      "signature": "class ReportsConfig(BaseModel)",
+      "module": "src/roebuck/config.py",
+      "source": "ast",
+      "is_public": true
+    },
+    {
+      "name": "ContextConfig",
+      "kind": "class",
+      "signature": "class ContextConfig(BaseModel)",
+      "module": "src/roebuck/config.py",
+      "source": "ast",
+      "is_public": true
+    },
+    {
+      "name": "AppConfig",
+      "kind": "class",
+      "signature": "class AppConfig(BaseModel)",
+      "module": "src/roebuck/config.py",
+      "source": "ast",
+      "is_public": true
+    },
+    {
+      "name": "load_config",
+      "kind": "function",
+      "signature": "def load_config(path: Path=Path('config.toml')) -> AppConfig",
+      "module": "src/roebuck/config.py",
+      "source": "ast",
+      "is_public": true
     }
   ],
   "data_models": [
     {
       "name": "AppConfig",
-      "fields_summary": "Central configuration object passed to all analyser `run` functions and CLI commands; likely contains repository path, output directory, and API/client settings inferred from config file and optional CLI overrides such as `config_path` and `repo`.",
-      "module": "src/roebuck/cli.py"
+      "fields_summary": "Top-level application configuration aggregating GitHubConfig, ClaudeConfig, SpecsConfig, ChurnConfig, ProfileConfig, ReportsConfig, and ContextConfig sub-models; loaded from a TOML file.",
+      "module": "src/roebuck/config.py"
     },
     {
-      "name": "ClaudeClient",
-      "fields_summary": "Client class encapsulating communication with the Anthropic Claude AI API; likely holds API credentials and provides methods for sending prompts and receiving analysis responses.",
-      "module": "src/roebuck/claude_client.py"
+      "name": "GitHubConfig",
+      "fields_summary": "Configuration for GitHub integration, likely containing repository owner/name and authentication token fields.",
+      "module": "src/roebuck/config.py"
+    },
+    {
+      "name": "ClaudeConfig",
+      "fields_summary": "Configuration for the Claude AI client, likely containing model name, API key, and request parameters.",
+      "module": "src/roebuck/config.py"
+    },
+    {
+      "name": "SpecsConfig",
+      "fields_summary": "Configuration related to specification or prompt templates used during analysis.",
+      "module": "src/roebuck/config.py"
+    },
+    {
+      "name": "ChurnConfig",
+      "fields_summary": "Configuration controlling churn analysis parameters such as time window or file filters.",
+      "module": "src/roebuck/config.py"
+    },
+    {
+      "name": "ProfileConfig",
+      "fields_summary": "Configuration for repository profile capture and documentation generation, likely including output paths.",
+      "module": "src/roebuck/config.py"
+    },
+    {
+      "name": "ReportsConfig",
+      "fields_summary": "Configuration specifying output directories or formats for generated reports.",
+      "module": "src/roebuck/config.py"
+    },
+    {
+      "name": "ContextConfig",
+      "fields_summary": "Configuration providing contextual information about the repository or project supplied to AI prompts.",
+      "module": "src/roebuck/config.py"
     }
   ],
   "external_dependencies": [
-    "Anthropic Claude AI API (via ClaudeClient, used for AI-assisted analysis across all analyser modules)",
-    "Typer (CLI framework used in cli.py for argument parsing and command registration)",
-    "Git / local repository (all analysers operate over a Git repository, accepting repo path and tag/ref arguments)"
+    "Anthropic Claude AI API (via ClaudeClient, driven by ClaudeConfig)",
+    "GitHub API (repository, pull request, and release data retrieval, driven by GitHubConfig)",
+    "Typer (CLI framework used in cli.py)",
+    "Pydantic (BaseModel-based configuration validation in config.py)",
+    "TOML configuration files (config.toml loaded by load_config)"
   ],
-  "captured_at": "2026-06-06T11:57:14.602580Z",
-  "captured_commit": "def0f9f239931c83334b193f76180fb25cb2f0f8",
+  "captured_at": "2026-06-06T12:04:29.460929Z",
+  "captured_commit": "e21d1bce4d6f219aa7beb3691d6f53898efa946b",
   "captured_ref": "main"
 }
