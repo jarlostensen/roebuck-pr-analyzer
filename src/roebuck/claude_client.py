@@ -1,4 +1,5 @@
 import json
+import re
 from typing import TypeVar, Type
 
 from anthropic import Anthropic
@@ -7,6 +8,29 @@ from pydantic import BaseModel, ValidationError
 from roebuck.config import ClaudeConfig
 
 T = TypeVar("T", bound=BaseModel)
+
+# Claude 4.x models (claude-{name}-4-...) have deprecated the temperature parameter.
+# Pattern matches the new naming convention: claude-<name>-<major>-
+_VERSIONED_MODEL_RE = re.compile(r"claude-(?:opus|sonnet|haiku)-(\d+)-")
+
+
+def _temperature_supported(model: str) -> bool:
+    """Return True if this model accepts the ``temperature`` parameter.
+
+    Claude 4.x and above use the naming pattern ``claude-{name}-{major}-{minor}``
+    and have deprecated ``temperature``. Claude 3.x uses a different naming
+    convention (``claude-3-{name}-{date}``) and still accepts temperature.
+
+    Args:
+        model: Model identifier string, e.g. ``"claude-opus-4-8"``.
+
+    Returns:
+        ``False`` for Claude 4+ models; ``True`` for all others.
+    """
+    match = _VERSIONED_MODEL_RE.search(model.lower())
+    if match:
+        return int(match.group(1)) < 4
+    return True
 
 
 class ClaudeClient:
@@ -31,13 +55,16 @@ class ClaudeClient:
             "Do not include any text, explanation, or markdown outside the JSON object."
         )
 
-        response = self._client.messages.create(
-            model=self._cfg.model,
-            max_tokens=self._cfg.max_tokens,
-            temperature=self._cfg.temperature,
-            system=full_system,
-            messages=[{"role": "user", "content": user}],
-        )
+        params: dict = {
+            "model": self._cfg.model,
+            "max_tokens": self._cfg.max_tokens,
+            "system": full_system,
+            "messages": [{"role": "user", "content": user}],
+        }
+        if _temperature_supported(self._cfg.model):
+            params["temperature"] = self._cfg.temperature
+
+        response = self._client.messages.create(**params)
 
         if response.stop_reason == "max_tokens":
             raise RuntimeError(

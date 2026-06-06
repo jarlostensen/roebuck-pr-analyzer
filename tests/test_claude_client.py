@@ -5,7 +5,7 @@ from unittest.mock import MagicMock, patch
 import pytest
 from pydantic import BaseModel
 
-from roebuck.claude_client import ClaudeClient
+from roebuck.claude_client import ClaudeClient, _temperature_supported
 from roebuck.config import ClaudeConfig
 
 
@@ -106,13 +106,50 @@ def test_analyse_uses_config_model(client, mock_anthropic, cfg):
     assert kwargs["model"] == cfg.model
 
 
-def test_analyse_uses_config_temperature(client, mock_anthropic, cfg):
+def test_analyse_omits_temperature_for_claude4_model(mock_anthropic):
+    """Claude 4.x models reject temperature; it must not appear in the API call."""
+    cfg4 = ClaudeConfig(model="claude-opus-4-8")
     mock_anthropic.messages.create.return_value = _make_response(
         json.dumps({"value": "v", "count": 0})
     )
-    client.analyse("sys", "usr", SimpleModel)
+    ClaudeClient(cfg4).analyse("sys", "usr", SimpleModel)
     kwargs = mock_anthropic.messages.create.call_args.kwargs
-    assert kwargs["temperature"] == cfg.temperature
+    assert "temperature" not in kwargs
+
+
+def test_analyse_sends_temperature_for_claude3_model(mock_anthropic):
+    """Claude 3.x models accept temperature; it must be forwarded from config."""
+    cfg3 = ClaudeConfig(model="claude-3-opus-20240229", temperature=0.5)
+    mock_anthropic.messages.create.return_value = _make_response(
+        json.dumps({"value": "v", "count": 0})
+    )
+    ClaudeClient(cfg3).analyse("sys", "usr", SimpleModel)
+    kwargs = mock_anthropic.messages.create.call_args.kwargs
+    assert kwargs["temperature"] == 0.5
+
+
+# ---------------------------------------------------------------------------
+# _temperature_supported
+# ---------------------------------------------------------------------------
+
+def test_temperature_supported_claude3_opus():
+    assert _temperature_supported("claude-3-opus-20240229") is True
+
+
+def test_temperature_supported_claude35_sonnet():
+    assert _temperature_supported("claude-3-5-sonnet-20241022") is True
+
+
+def test_temperature_supported_claude4_opus():
+    assert _temperature_supported("claude-opus-4-8") is False
+
+
+def test_temperature_supported_claude4_sonnet():
+    assert _temperature_supported("claude-sonnet-4-6") is False
+
+
+def test_temperature_supported_claude4_haiku():
+    assert _temperature_supported("claude-haiku-4-5-20251001") is False
 
 
 def test_analyse_uses_config_max_tokens(client, mock_anthropic, cfg):

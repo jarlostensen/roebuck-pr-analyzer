@@ -77,3 +77,13 @@ phase = ""
 # Examples: "High defect ratios reflect iterative discovery, not instability"
 #           "Auth module is intentionally experimental — not production yet"
 notes = ""
+
+[profile]
+# Glob patterns for source files to include in the profile.
+# Adjust to match the actual layout of the repo being analysed
+patterns = [
+    "src/**/*.py",
+    "*.py",
+]
+# maximum size of a file requested TODO: this shouldn't be needed
+max_chars = 40000
