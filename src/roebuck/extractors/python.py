@@ -38,10 +38,12 @@ class PythonExtractor:
             Returns an empty list if ``source`` contains a syntax error or is
             empty.
         """
+        # Strip BOM and null bytes that can arrive from some API responses.
+        source = source.lstrip("﻿").replace("\x00", "")
         try:
             tree = ast.parse(source)
-        except SyntaxError:
-            logger.warning("Syntax error parsing %s; skipping extraction", path)
+        except SyntaxError as e:
+            logger.warning("Syntax error parsing %s (%s); skipping extraction", path, e)
             return []
 
         results: list[ExtractedInterface] = []
