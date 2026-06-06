@@ -1,9 +1,12 @@
+import logging
 from fnmatch import fnmatch
 from concurrent.futures import ThreadPoolExecutor, as_completed
 
 from github.Repository import Repository
 
-_MAX_WORKERS = 8
+_MAX_WORKERS = 4
+
+logger = logging.getLogger(__name__)
 
 
 class SpecLoader:
@@ -32,7 +35,16 @@ class SpecLoader:
                 contents = self._repo.get_contents(path)
                 if isinstance(contents, list):
                     return None
-                return path, contents.decoded_content.decode("utf-8", errors="replace")
+                data = contents.decoded_content
+                # GitHub's secondary rate limit can truncate responses; skip if
+                # decoded byte count doesn't match the declared file size.
+                if contents.size > 0 and len(data) != contents.size:
+                    logger.warning(
+                        "Truncated response for %s (%d/%d bytes); skipping",
+                        path, len(data), contents.size,
+                    )
+                    return None
+                return path, data.decode("utf-8", errors="replace")
             except Exception:
                 return None
 
