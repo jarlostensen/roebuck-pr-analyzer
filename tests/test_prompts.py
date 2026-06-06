@@ -524,3 +524,115 @@ def test_build_enrichment_prompt_truncates_large_interface_list():
     interfaces = _make_interfaces(profile_prompts.MAX_INTERFACES_IN_PROMPT + 10)
     prompt = profile_prompts.build_enrichment_prompt(interfaces)
     assert "truncated" in prompt.lower()
+
+
+# ===========================================================================
+# PR prompt — profile integration (TASK-018)
+# ===========================================================================
+
+from datetime import timezone as _tz
+from roebuck.models import ProjectProfile, PublicInterface, PublicModule, DataModel
+from roebuck.prompts.pr import build_system_prompt, _format_profile, MAX_PROFILE_CHARS
+
+
+def _make_profile(**kwargs) -> ProjectProfile:
+    defaults = dict(
+        project_summary="Test project.",
+        architecture_notes="Layered CLI.",
+        captured_at=datetime(2024, 6, 1, tzinfo=_tz.utc),
+        captured_commit="abc" * 14,
+        captured_ref="main",
+    )
+    defaults.update(kwargs)
+    return ProjectProfile(**defaults)
+
+
+def _make_pr_minimal() -> PRData:
+    return PRData(
+        number=1,
+        title="PR",
+        body="desc",
+        author="user",
+        base_branch="main",
+        head_branch="feature",
+        diff="+ line",
+        changed_files=["src/app.py"],
+        additions=1,
+        deletions=0,
+        commits=["feat: x"],
+    )
+
+
+def test_build_system_prompt_base_when_no_profile():
+    from roebuck.prompts.pr import SYSTEM_PROMPT
+    result = build_system_prompt(specs={"docs/spec.md": "spec"}, profile=None)
+    assert result == SYSTEM_PROMPT
+    assert "spec_vs_reality_gaps" not in result
+
+
+def test_build_system_prompt_base_when_no_specs():
+    result = build_system_prompt(specs={}, profile=_make_profile())
+    from roebuck.prompts.pr import SYSTEM_PROMPT
+    assert result == SYSTEM_PROMPT
+    assert "spec_vs_reality_gaps" not in result
+
+
+def test_build_system_prompt_includes_addendum_when_both():
+    result = build_system_prompt(specs={"docs/spec.md": "spec"}, profile=_make_profile())
+    assert "spec_vs_reality_gaps" in result
+
+
+def test_build_user_prompt_includes_profile_section():
+    pr = _make_pr_minimal()
+    profile = _make_profile()
+    prompt = pr_prompts.build_user_prompt(pr, specs={}, profile=profile)
+    assert "## Project Profile" in prompt
+    assert "Test project." in prompt
+
+
+def test_build_user_prompt_no_profile_section_when_none():
+    pr = _make_pr_minimal()
+    prompt = pr_prompts.build_user_prompt(pr, specs={})
+    assert "## Project Profile" not in prompt
+
+
+def test_build_user_prompt_profile_modules_included():
+    pr = _make_pr_minimal()
+    profile = _make_profile(
+        public_modules=[PublicModule(path="src/main.py", purpose="Entry point")]
+    )
+    prompt = pr_prompts.build_user_prompt(pr, specs={}, profile=profile)
+    assert "Entry point" in prompt
+
+
+def test_build_user_prompt_profile_interfaces_included():
+    pr = _make_pr_minimal()
+    profile = _make_profile(
+        public_interfaces=[
+            PublicInterface(
+                name="run",
+                kind="function",
+                signature="def run() -> None",
+                module="src/main.py",
+                source="ast",
+                is_public=True,
+            )
+        ]
+    )
+    prompt = pr_prompts.build_user_prompt(pr, specs={}, profile=profile)
+    assert "def run() -> None" in prompt
+
+
+def test_format_profile_truncates_at_max_chars():
+    profile = _make_profile(
+        architecture_notes="x" * (MAX_PROFILE_CHARS + 500)
+    )
+    result = _format_profile(profile, MAX_PROFILE_CHARS)
+    assert len(result) <= MAX_PROFILE_CHARS + 100  # allows for truncation notice
+    assert "truncated" in result.lower()
+
+
+def test_format_profile_within_limit_no_truncation_note():
+    profile = _make_profile()
+    result = _format_profile(profile, MAX_PROFILE_CHARS)
+    assert "truncated" not in result.lower()

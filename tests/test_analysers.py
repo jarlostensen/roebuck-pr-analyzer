@@ -380,3 +380,188 @@ def test_generate_docs_filename_contains_date(tmp_path, monkeypatch):
     out = generate_docs(cfg)
     assert "project-profile-" in out.name
     assert out.suffix == ".md"
+
+
+# ===========================================================================
+# PR analyser — profile integration (TASK-018)
+# ===========================================================================
+
+from dataclasses import dataclass, field as dc_field
+from roebuck.analysers.pr import _load_profile, _check_staleness, _build_sections
+from roebuck.models import PRAnalysisResult, PRData, DataModel, PublicInterface, PublicModule
+
+
+# ---------------------------------------------------------------------------
+# Shared fixtures
+# ---------------------------------------------------------------------------
+
+def _make_pr_data() -> PRData:
+    return PRData(
+        number=42,
+        title="Add feature",
+        body="Does stuff",
+        author="user",
+        base_branch="main",
+        head_branch="feature/x",
+        diff="+ added line",
+        changed_files=["src/app.py"],
+        additions=5,
+        deletions=2,
+        commits=["feat: add feature"],
+    )
+
+
+def _make_pr_result(**kwargs) -> PRAnalysisResult:
+    defaults = dict(
+        spec_alignment="aligned",
+        spec_gaps=[],
+        risk_level="low",
+        risk_factors=[],
+        test_adequacy="adequate",
+        test_gaps=[],
+        summary="Looks good.",
+        recommendations=[],
+    )
+    defaults.update(kwargs)
+    return PRAnalysisResult(**defaults)
+
+
+def _write_profile(tmp_path: Path) -> Path:
+    profile = ProjectProfile(
+        project_summary="Test project.",
+        architecture_notes="Layered CLI.",
+        captured_at=datetime(2024, 6, 1, tzinfo=timezone.utc),
+        captured_commit="abc" * 14,
+        captured_ref="main",
+    )
+    d = tmp_path / ".roebuck"
+    d.mkdir(exist_ok=True)
+    p = d / "profile.json"
+    p.write_text(profile.model_dump_json())
+    return p
+
+
+# ---------------------------------------------------------------------------
+# _load_profile
+# ---------------------------------------------------------------------------
+
+def test_load_profile_absent_returns_none(tmp_path, monkeypatch):
+    monkeypatch.chdir(tmp_path)
+    assert _load_profile() is None
+
+
+def test_load_profile_valid_returns_profile(tmp_path, monkeypatch):
+    monkeypatch.chdir(tmp_path)
+    _write_profile(tmp_path)
+    profile = _load_profile()
+    assert profile is not None
+    assert profile.project_summary == "Test project."
+
+
+def test_load_profile_malformed_returns_none(tmp_path, monkeypatch):
+    monkeypatch.chdir(tmp_path)
+    (tmp_path / ".roebuck").mkdir()
+    (tmp_path / ".roebuck" / "profile.json").write_text("{bad json")
+    assert _load_profile() is None
+
+
+# ---------------------------------------------------------------------------
+# _check_staleness
+# ---------------------------------------------------------------------------
+
+def test_check_staleness_returns_ahead_by():
+    mock_gh = MagicMock()
+    mock_gh.repo.compare.return_value.ahead_by = 5
+    profile = ProjectProfile(
+        project_summary="x",
+        architecture_notes="y",
+        captured_at=datetime(2024, 1, 1, tzinfo=timezone.utc),
+        captured_commit="abc123",
+        captured_ref="main",
+    )
+    assert _check_staleness(mock_gh, profile) == 5
+    mock_gh.repo.compare.assert_called_once_with(base="abc123", head="HEAD")
+
+
+def test_check_staleness_falls_back_to_ref_on_404():
+    from github import GithubException
+    mock_gh = MagicMock()
+    exc = GithubException(404, {"message": "Not Found"}, {})
+    mock_gh.repo.compare.side_effect = [exc, MagicMock(ahead_by=3)]
+    profile = ProjectProfile(
+        project_summary="x",
+        architecture_notes="y",
+        captured_at=datetime(2024, 1, 1, tzinfo=timezone.utc),
+        captured_commit="dead1234",
+        captured_ref="main",
+    )
+    assert _check_staleness(mock_gh, profile) == 3
+
+
+def test_check_staleness_returns_none_when_both_fail():
+    from github import GithubException
+    mock_gh = MagicMock()
+    exc = GithubException(404, {"message": "Not Found"}, {})
+    mock_gh.repo.compare.side_effect = [exc, Exception("also fails")]
+    profile = ProjectProfile(
+        project_summary="x",
+        architecture_notes="y",
+        captured_at=datetime(2024, 1, 1, tzinfo=timezone.utc),
+        captured_commit="dead1234",
+        captured_ref="main",
+    )
+    assert _check_staleness(mock_gh, profile) is None
+
+
+def test_check_staleness_non_404_returns_none():
+    from github import GithubException
+    mock_gh = MagicMock()
+    mock_gh.repo.compare.side_effect = GithubException(500, {"message": "Server error"}, {})
+    profile = ProjectProfile(
+        project_summary="x",
+        architecture_notes="y",
+        captured_at=datetime(2024, 1, 1, tzinfo=timezone.utc),
+        captured_commit="abc",
+        captured_ref="main",
+    )
+    assert _check_staleness(mock_gh, profile) is None
+
+
+# ---------------------------------------------------------------------------
+# _build_sections
+# ---------------------------------------------------------------------------
+
+def test_build_sections_no_staleness_no_delta():
+    pr = _make_pr_data()
+    r = _make_pr_result()
+    sections = _build_sections(pr, r)
+    titles = [s[0] for s in sections]
+    assert "Summary" in titles
+    assert "Profile Staleness Warning" not in titles
+    assert "Profile Drift" not in titles
+    assert "Spec vs Reality Gaps" not in titles
+
+
+def test_build_sections_staleness_warning_first():
+    pr = _make_pr_data()
+    r = _make_pr_result()
+    sections = _build_sections(pr, r, staleness_warning="Stale!")
+    assert sections[0] == ("Profile Staleness Warning", "Stale!")
+
+
+def test_build_sections_profile_delta_appended():
+    pr = _make_pr_data()
+    r = _make_pr_result(profile_delta=["added: run()", "removed: old_run()"])
+    sections = _build_sections(pr, r)
+    titles = [s[0] for s in sections]
+    assert "Profile Drift" in titles
+    drift_body = dict(sections)["Profile Drift"]
+    assert "added: run()" in drift_body
+
+
+def test_build_sections_spec_vs_reality_gaps_appended():
+    pr = _make_pr_data()
+    r = _make_pr_result(spec_vs_reality_gaps=["spec says X; code does Y"])
+    sections = _build_sections(pr, r)
+    titles = [s[0] for s in sections]
+    assert "Spec vs Reality Gaps" in titles
