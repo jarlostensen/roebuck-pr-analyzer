@@ -1,6 +1,6 @@
 # Roebuck — Task Plan
 
-_Last updated: 2026-06-05._
+_Last updated: 2026-06-06._
 
 ---
 
@@ -101,7 +101,7 @@ Use `typer.testing.CliRunner` to test:
 
 ---
 
-### TASK-007: Add explicit analysis questions to `release.py` user prompt
+### ~~TASK-007: Add explicit analysis questions to `release.py` user prompt~~ — COMPLETED 2026-06-05
 
 **File**: `src/roebuck/prompts/release.py`
 **Requirement**: [FR-003](requirements.md)
@@ -121,7 +121,7 @@ Additionally, enumerate the breaking-change taxonomy in the system prompt (API s
 
 ---
 
-### TASK-008: Add risk calibration and spec-alignment definitions to `pr.py` and `release.py`
+### ~~TASK-008: Add risk calibration and spec-alignment definitions to `pr.py` and `release.py`~~ — COMPLETED 2026-06-05
 
 **Files**: `src/roebuck/prompts/pr.py`, `src/roebuck/prompts/release.py`
 **Requirement**: [FR-001](requirements.md), [FR-003](requirements.md)
@@ -141,7 +141,7 @@ Also add to `pr.py` system prompt the explicit review dimensions currently missi
 
 ---
 
-### TASK-009: Fix `churn.py` prompt — surface thresholds, ranking criterion, keyword caveat
+### ~~TASK-009: Fix `churn.py` prompt — surface thresholds, ranking criterion, keyword caveat~~ — COMPLETED 2026-06-05
 
 **File**: `src/roebuck/prompts/churn.py`
 **Requirement**: [FR-004](requirements.md)
@@ -157,7 +157,7 @@ Three weaknesses in the churn user prompt:
 
 ---
 
-### TASK-010: Fix `file_history.py` prompt — today anchor, stability-trend definition, emoji removal
+### ~~TASK-010: Fix `file_history.py` prompt — today anchor, stability-trend definition, emoji removal~~ — COMPLETED 2026-06-05
 
 **File**: `src/roebuck/prompts/file_history.py`
 **Requirement**: [FR-002](requirements.md)
@@ -173,7 +173,7 @@ Three issues:
 
 ---
 
-### TASK-011: Extract shared `_context_section` to a prompt utilities module
+### ~~TASK-011: Extract shared `_context_section` to a prompt utilities module~~ — COMPLETED 2026-06-05
 
 **Files**: `src/roebuck/prompts/pr.py`, `src/roebuck/prompts/churn.py`, `src/roebuck/prompts/file_history.py`, `src/roebuck/prompts/release.py`, `src/roebuck/prompts/_shared.py` (new)
 **Requirement**: [FR-001](requirements.md), [FR-002](requirements.md), [FR-003](requirements.md), [FR-004](requirements.md)
@@ -184,3 +184,195 @@ Three issues:
 No functional change — this is a maintenance fix to prevent the four copies from silently diverging.
 
 **Acceptance**: `_shared.py` contains the function; no prompt module defines its own `_context_section`; `pytest` continues to pass with no changes to test logic.
+
+---
+
+## Phase: Project Profile (ADR-0007, ADR-0008)
+
+Design: [docs/design/project-profile.md](design/project-profile.md).
+ADRs: [ADR-0007](adr/ADR-0007-project-profile-extraction.md), [ADR-0008](adr/ADR-0008-language-extractor-plugins.md).
+
+Dependencies between tasks: TASK-012 and TASK-013 have no inter-dependencies and can be
+worked in parallel. TASK-014 (extractors) has no dependencies. TASK-015 (prompts) depends
+on TASK-012. TASK-016 (capture analyser) depends on TASK-013, TASK-014, TASK-015.
+TASK-017 (CLI) depends on TASK-016. TASK-018 (PR enrichment) depends on TASK-012 and
+TASK-013. TASK-019 (generate-docs) depends on TASK-012 and TASK-016.
+
+---
+
+### TASK-012: Add `ProjectProfile` Pydantic model and extend `PRAnalysisResult`
+
+**Files**: `src/roebuck/models.py`, `tests/test_models.py`
+**Requirements**: FR-013, ADR-0007, ADR-0004
+**Priority**: High — blocks TASK-015, TASK-016, TASK-018
+
+Add nested Pydantic models to `models.py`:
+- `PublicModule(path: str, purpose: str)`
+- `PublicInterface(name: str, kind: str, signature: str, module: str, source: Literal["ast", "claude"], is_public: bool)`
+- `DataModel(name: str, fields_summary: str, module: str)`
+- `ProjectProfile` with: `profile_version: int = 1`, `project_summary: str`, `architecture_notes: str`,
+  `public_modules: list[PublicModule]`, `public_interfaces: list[PublicInterface]`,
+  `data_models: list[DataModel]`, `external_dependencies: list[str]`,
+  `captured_at: datetime`, `captured_commit: str`, `captured_ref: str`
+
+Extend `PRAnalysisResult` with:
+- `profile_delta: list[str]` — `Field(default_factory=list, description="Interfaces added, removed, or changed by this PR relative to the stored project profile. Return an empty list if no project profile was provided or if drift detection is disabled.")`
+- `spec_vs_reality_gaps: list[str]` — `Field(default_factory=list, description="Gaps between the provided specification documents and the project profile's description of current behaviour. Return an empty list if only one source (specs or profile) is present.")`
+
+**Acceptance**: `ProjectProfile.model_validate_json(...)` round-trips correctly; `PRAnalysisResult`
+new fields default to empty list; existing `pytest tests/test_prompts.py` still passes (schema injection picks up the new fields transparently).
+
+---
+
+### TASK-013: Add `ProfileConfig` to app configuration
+
+**Files**: `src/roebuck/config.py`, `tests/test_config.py`
+**Requirements**: FR-013, ADR-0007
+**Priority**: High — blocks TASK-016, TASK-018
+
+Add `ProfileConfig` Pydantic model with fields:
+- `patterns: list[str]` — glob patterns for source files to sample
+- `max_chars: int = Field(default=40000, ge=1000)` — total character budget for sampled source
+- `stale_commit_threshold: int = Field(default=20, ge=1)` — soft staleness warning threshold
+- `hard_stale_threshold: int = Field(default=100, ge=1)` — hard staleness exclusion threshold
+- `enable_drift_detection: bool = False` — gates `profile_delta` population
+
+Add `profile: ProfileConfig | None = None` to `AppConfig`. If the `[profile]` section is absent
+from `config.toml`, `cfg.profile` is `None` and all profile features are silently skipped.
+
+**Acceptance**: Config with `[profile]` section loads `ProfileConfig` correctly; config without
+`[profile]` section has `cfg.profile is None`; negative `max_chars` raises validation error;
+`pytest tests/test_config.py` passes.
+
+---
+
+### TASK-014: Implement `LanguageExtractor` protocol and `PythonExtractor`
+
+**Files**: `src/roebuck/extractors/__init__.py`, `src/roebuck/extractors/python.py`,
+`src/roebuck/extractors/registry.py`, `tests/test_extractors.py`
+**Requirements**: FR-013, ADR-0008
+**Priority**: High — blocks TASK-016
+
+- `src/roebuck/extractors/__init__.py`: define `ExtractedInterface` TypedDict (`name`, `kind`,
+  `signature`, `module`, `is_public`) and `LanguageExtractor` Protocol (`extensions: frozenset[str]`,
+  `requires_toolchain: bool`, `extract(source: str, path: str) -> list[ExtractedInterface]`)
+- `src/roebuck/extractors/python.py`: `PythonExtractor` using `ast` stdlib; `extensions = frozenset({".py"})`; `requires_toolchain = False`; visits module-level `FunctionDef`, `AsyncFunctionDef`, and `ClassDef` nodes; excludes names starting with `_`; reconstructs type-annotated signature strings from the AST
+- `src/roebuck/extractors/registry.py`: `get_extractor(path: str) -> LanguageExtractor | None` — plain dict lookup keyed by file extension
+
+Syntax errors in source must not propagate — return empty list and log a warning.
+
+**Acceptance**: `PythonExtractor` extracts `def foo(x: int) -> str: ...` as `signature="def foo(x: int) -> str"`;
+private names (`_helper`) are excluded; `get_extractor("main.py")` returns a `PythonExtractor` instance;
+`get_extractor("main.go")` returns `None`; syntax errors return empty list; `pytest tests/test_extractors.py` passes.
+
+---
+
+### TASK-015: Write profile prompt builders
+
+**Files**: `src/roebuck/prompts/profile.py`, `tests/test_prompts.py`
+**Requirements**: FR-013, ADR-0007, ADR-0003
+**Priority**: Medium — blocks TASK-016
+
+Add `src/roebuck/prompts/profile.py` with:
+- `EXTRACTION_SYSTEM_PROMPT`: instructs Claude to extract public interfaces as JSON matching the
+  `ExtractedInterface` schema; used for Phase 1b (Claude fallback for unmatched file types)
+- `build_extraction_prompt(sources: dict[str, str], max_chars: int) -> str`: user prompt with
+  concatenated source content (respecting `max_chars`)
+- `ENRICHMENT_SYSTEM_PROMPT`: instructs Claude to add `purpose` descriptions to a provided
+  interface list and produce `project_summary` and `architecture_notes`
+- `build_enrichment_prompt(interfaces: list[ExtractedInterface]) -> str`: user prompt from
+  extracted interface list for Phase 2 enrichment
+
+Follow the same module structure as `src/roebuck/prompts/pr.py` (module-level constants, typed builder functions).
+
+**Acceptance**: Both builders return non-empty strings containing their key section headers;
+`pytest tests/test_prompts.py` covers both builders; existing prompt tests unaffected.
+
+---
+
+### TASK-016: Implement `profile capture` analyser
+
+**Files**: `src/roebuck/analysers/profile.py`, `tests/test_analysers.py`
+**Requirements**: FR-013, ADR-0007, ADR-0008
+**Priority**: Medium — blocks TASK-017, TASK-019
+
+Add `capture(cfg: AppConfig, force: bool = False) -> None` to a new `src/roebuck/analysers/profile.py`:
+
+1. Exit with clear message if `cfg.profile is None`
+2. Collision check: if `.roebuck/profile.json` exists without `captured_at` key, warn and exit unless `force=True`
+3. Fetch matched files via `SpecLoader(cfg.github)` using `cfg.profile.patterns` and `cfg.profile.max_chars`
+4. Phase 1: call `get_extractor(path).extract(source, path)` for each file with a matching extractor; buffer unmatched files
+5. Phase 1b: if buffered files exist, call Claude with `build_extraction_prompt()` and parse the extraction result; tag these as `source="claude"`; tag Phase 1 results as `source="ast"`
+6. Phase 2: call Claude with `build_enrichment_prompt()` on the merged interface list; parse as `ProjectProfile` (ADR-0003 pipeline)
+7. Set `profile_version=1`, `captured_at=datetime.now(UTC)`, `captured_commit`, `captured_ref` on the result
+8. Write `ProjectProfile.model_dump_json()` to `.roebuck/profile.json`; create `.roebuck/` directory if absent
+
+**Acceptance**: `capture()` writes valid JSON that round-trips through `ProjectProfile.model_validate_json()`;
+collision check prevents overwrite without `force=True`; `cfg.profile is None` exits with message;
+mocked tests verify Phase 1, 1b, and 2 are called with correct arguments; `pytest tests/test_analysers.py` passes.
+
+---
+
+### TASK-017: Add `profile` CLI command group
+
+**Files**: `src/roebuck/cli.py`, `tests/test_cli.py`
+**Requirements**: FR-013, ADR-0001
+**Priority**: Medium — required for end-to-end use
+
+Add `profile_app = typer.Typer(help="Manage the project profile.", no_args_is_help=True)` and
+`app.add_typer(profile_app, name="profile")`.
+
+Add two subcommands:
+- `profile capture [--force] [--config PATH]` — calls `capture(cfg, force=force)`
+- `profile generate-docs [--config PATH]` — calls `generate_docs(cfg)`
+
+Follow the existing `_load(config_path, repo)` helper pattern.
+
+**Acceptance**: `roebuck profile --help` lists both subcommands; `CliRunner` tests verify each
+command dispatches correctly and exits 0 on success (analyser mocked); missing config exits 1;
+`pytest tests/test_cli.py` passes.
+
+---
+
+### TASK-018: Extend PR analysis with profile enrichment and staleness check
+
+**Files**: `src/roebuck/analysers/pr.py`, `src/roebuck/prompts/pr.py`,
+`tests/test_analysers.py`, `tests/test_prompts.py`
+**Requirements**: FR-001, FR-013, ADR-0007
+**Priority**: Medium
+
+In `src/roebuck/analysers/pr.py`:
+- After loading specs, attempt to read `.roebuck/profile.json` from CWD; parse as `ProjectProfile`
+- Call `repo.compare(base=profile.captured_commit, head="HEAD").ahead_by` for staleness check
+- Soft threshold (`cfg.profile.stale_commit_threshold`): prepend warning to report, still use profile
+- Hard threshold (`cfg.profile.hard_stale_threshold`): exclude profile, add prominent warning section
+- SHA fallback: on `GithubException` 404, retry with `profile.captured_ref`; if that also fails, skip staleness check and still use profile
+
+In `src/roebuck/prompts/pr.py`:
+- Add `profile: ProjectProfile | None = None` parameter to `build_user_prompt`
+- Inject profile structured fields after specs section, within `MAX_PROFILE_CHARS = 8000`
+- Add `spec_vs_reality_gaps` instruction to system prompt only when called with both specs and profile
+
+**Acceptance**: PR analysis with profile present injects profile content into user prompt;
+PR analysis without `.roebuck/profile.json` is unchanged; staleness above hard threshold excludes profile;
+`profile_delta` is empty when `cfg.profile.enable_drift_detection` is False;
+`pytest tests/test_prompts.py` and `tests/test_analysers.py` pass; existing PR tests are unaffected.
+
+---
+
+### TASK-019: Implement `profile generate-docs` command
+
+**Files**: `src/roebuck/analysers/profile.py`, `tests/test_analysers.py`
+**Requirements**: FR-013, ADR-0007
+**Priority**: Low — standalone; no blockers
+
+Add `generate_docs(cfg: AppConfig) -> Path` to `src/roebuck/analysers/profile.py`:
+- Read `.roebuck/profile.json`; exit with clear error if absent or unparseable
+- Render a Markdown document:
+  - Provenance header: "Generated by Roebuck from profile captured on {date} at commit {sha[:8]}. Review before committing as a spec."
+  - Sections: Project Summary, Architecture Notes, Public Modules table, Public Interfaces table, Data Models table, External Dependencies list
+- Write to `cfg.reports.output_dir / f"project-profile-{date.today()}.md"` (consistent with FR-006)
+- Return the written path
+
+**Acceptance**: Output file contains provenance header and all structured sections; absent profile file
+exits with error (non-zero); `pytest tests/test_analysers.py` passes.
